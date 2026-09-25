@@ -192,6 +192,18 @@ async function inputPage() {
 async function confirmPage() {
   const st = store.get("sa_interp");
   if (!st) { location.hash = "#/new"; return; }
+  // Re-read the text on every load so a reload (or a parser update) never shows a stale interpretation.
+  const text = store.get("sa_text");
+  if (text) {
+    try {
+      const fresh = await api("/api/interpret", { method: "POST", body: { text, anonymous_user_id: anon } });
+      if (JSON.stringify(fresh) !== JSON.stringify(st.result)) {
+        st.result = fresh; st.choices = {};
+        if (!st.name && fresh.draft && fresh.draft.entry_conditions && fresh.draft.entry_conditions.length) st.name = fresh.draft.name;
+        store.set("sa_interp", st);
+      }
+    } catch { /* server unreachable: fall back to the saved interpretation */ }
+  }
   const res = st.result;
   const summary = h("div");
   const errs = h("div");
