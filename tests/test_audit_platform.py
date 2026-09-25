@@ -17,7 +17,7 @@ from strategy_audit.db import DB
 from strategy_audit.parser import apply_patches, interpret, validate_draft
 from strategy_audit.quant import robustness as R
 from strategy_audit.quant.data import MockProvider
-from strategy_audit.quant.engine import Market, generate_trades, indicator_series, net_return, run_backtest
+from strategy_audit.quant.engine import Market, condition_funnel, generate_trades, indicator_series, net_return, run_backtest
 from strategy_audit.quant.lookahead import lookahead_audit
 from strategy_audit.schema import StrategySpec
 from strategy_audit.service import AuditService, NotFound
@@ -124,6 +124,20 @@ class TestSchema(unittest.TestCase):
 
 # ------------------------------------------------------------------ backtest
 class TestBacktest(unittest.TestCase):
+    def test_condition_funnel_explains_zero_signals(self):
+        """User report (2026-09-25): 6 contradictory rules gave 0 trades with no explanation."""
+        s0, e0 = MKT.period("development")
+        ok = condition_funnel(spec(), MKT, s0, e0)
+        _, stats = generate_trades(spec(), MKT, s0, e0)
+        self.assertGreaterEqual(ok[-1]["days_with_previous"], stats["signals"])     # funnel end = every signal day
+        self.assertGreater(ok[0]["days_alone"], 0)
+        clash = spec(entry_conditions=BASE["entry_conditions"] +
+                     [{"indicator": "RETURN", "period": 5, "operator": ">=", "value": 0.04}])
+        f = condition_funnel(clash, MKT, s0, e0)
+        self.assertEqual(f[-1]["days_with_previous"], 0)
+        self.assertGreater(f[-1]["days_alone"], 0)
+        self.assertEqual([x["days_with_previous"] for x in f[:2]], [x["days_with_previous"] for x in ok])
+
     def test_next_open_entry_and_holding_period(self):
         s0, e0 = MKT.period("development")
         led, _ = generate_trades(spec(), MKT, s0, e0)

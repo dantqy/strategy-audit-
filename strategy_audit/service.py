@@ -25,7 +25,7 @@ from .db import DB, new_id, now
 from .parser import apply_patches, interpret, validate_draft
 from .quant import robustness as R
 from .quant.data import MarketDataProvider, default_provider
-from .quant.engine import Market, run_backtest
+from .quant.engine import Market, condition_funnel, run_backtest
 from .quant.lookahead import lookahead_audit
 from .schema import StrategySpec
 
@@ -188,9 +188,13 @@ class AuditService:
             raise NotFound("backtest not found")
         v, spec = self._version(b["version_id"])
         fam = self.db.one("SELECT validation_revealed FROM families WHERE id=?", (v["family_id"],))
+        res = json.loads(b["results_json"])
+        if not res["counts"].get("signals"):
+            s, e = self.mkt.period(b["period"])
+            res["zero_signal_funnel"] = condition_funnel(spec, self.mkt, s, e)
         return {"backtest_id": b["id"], "version_id": v["id"], "family_id": v["family_id"], "version_no": v["version_no"],
                 "name": spec.name, "rules": [c.describe() for c in spec.entry_conditions], "exit": spec.exit.describe(),
-                "validation_revealed": bool(fam["validation_revealed"]), **json.loads(b["results_json"])}
+                "validation_revealed": bool(fam["validation_revealed"]), **res}
 
     # ----------------------------------------------------------------- audit
     def audit(self, backtest_id: str) -> dict:

@@ -87,6 +87,25 @@ def signal_mask(spec: StrategySpec, bars: pd.DataFrame, spy: pd.DataFrame) -> pd
     return m
 
 
+def condition_funnel(spec: StrategySpec, mkt: "Market", start: date, end: date) -> list[dict]:
+    """Why a strategy has no signals: stock-days in [start, end] where each condition holds on its own,
+    and where it holds together with every condition listed before it."""
+    alone = [0] * len(spec.entry_conditions)
+    together = [0] * len(spec.entry_conditions)
+    for code in sorted(mkt.arr):
+        b = mkt.bars[code]
+        idx = pd.Index(mkt.arr[code].dates)
+        in_period = (idx >= start) & (idx <= end)
+        m = np.ones(len(b), dtype=bool)
+        for k, cond in enumerate(spec.entry_conditions):
+            cm = condition_mask(cond, b, mkt.spy).to_numpy() & in_period
+            m &= cm
+            alone[k] += int(cm.sum())
+            together[k] += int(m.sum())
+    return [{"rule": c.describe(), "days_alone": a, "days_with_previous": t}
+            for c, a, t in zip(spec.entry_conditions, alone, together)]
+
+
 def regime_series(spy: pd.DataFrame) -> pd.Series:
     c = _spy_close(spy)
     sma = c.rolling(200, min_periods=200).mean()

@@ -329,6 +329,25 @@ function equityCharts(bt) {
   });
   return box;
 }
+// 0 signals: show, rule by rule, how many stock-days survive, so the user can see which rule (or pair) never co-occurs.
+function zeroSignalPanel(funnel) {
+  if (!funnel || !funnel.length) return null;
+  const killer = funnel.find(f => f.days_with_previous === 0);
+  const fmt = (x) => x.toLocaleString();
+  return h("div", { class: "banner warn" },
+    h("strong", {}, "No trades: no day ever met all your rules at once. "),
+    killer ? (killer.days_alone === 0
+      ? `"${killer.rule}" never happened on its own in this period.`
+      : `Everything works until "${killer.rule}". It happens on its own, but never on the same day as the rules above it. ` +
+        "Rules that need opposite things (e.g. an oversold RSI and a new 20-day high) can't both be true.") : null,
+    h("table", { class: "tbl", style: "margin-top:10px" },
+      h("thead", {}, h("tr", {}, h("th", {}, "Rule (added in order)"), h("th", {}, "Stock-days true on its own"),
+        h("th", {}, "Stock-days all rules so far are true"))),
+      h("tbody", {}, funnel.map(f => h("tr", {}, h("td", {}, f.rule), h("td", {}, fmt(f.days_alone)),
+        h("td", {}, fmt(f.days_with_previous)))))),
+    h("div", { style: "margin-top:8px" }, "Tip: remove rules that pull in opposite directions, then run again."));
+}
+
 async function resultsPage(btId) {
   const [bt, ds] = await Promise.all([api("/api/backtests/" + btId), dataset()]);
   const s = bt.strategy, b = bt.benchmark, m = bt.meta, n = bt.counts;
@@ -351,6 +370,7 @@ async function resultsPage(btId) {
       `🔒 Results below cover the development period only. The last 30% of the data (${ds.validation_start} → ${ds.last_bar}) ` +
       "is sealed for an out-of-sample test you can reveal once, after trying to break the strategy."),
     ...dataBanners(ds),
+    zeroSignalPanel(bt.zero_signal_funnel),
     h("h2", {}, "Historical performance"),
     h("div", { class: "kpis" },
       kpi("Total return", pct(s.total_return), `SPY ${pct(b.total_return)}`), kpi("CAGR", pct(s.cagr), `SPY ${pct(b.cagr)}`),
