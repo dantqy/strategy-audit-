@@ -1,0 +1,36 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+data/cache/*
+!data/cache/.gitkeep
+outputs/scans/*
+outputs/backtests/*
+outputs/logs/*
+!outputs/**/.gitkeep
+outputs/paper_ledger.json
+config/telegram.local.yaml
+outputs/telegram_bot_state.json
+outputs/fractional_test_ledger.json
+outputs/swing_ledger.json
+outputs/swing_ideas.csv
+outputs/swing_tracking.csv
+outputs/swing/
+config/audit_platform.local.env
+outputs/strategy_audit.sqlite3
+
+# --- publishing rules (GitHub) ---
+# Moomoo-derived data and anything computed from it stay local: redistribution rights are unresolved
+# (see strategy_audit/docs/DATA_LICENSING.md)
+outputs/*
+!outputs/**/.gitkeep
+data/cache/
+data/universe_midcap.csv
+# secrets / local settings
+config/*.local.*
+*.local.env
+.env
+# tools
+.claude/
+*.sqlite3

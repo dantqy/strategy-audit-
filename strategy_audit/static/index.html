@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Strategy Audit</title>
+  <meta name="description" content="Describe a trading strategy in plain English, backtest it, and try to prove it doesn't work.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f172a'/%3E%3Cpath d='M8 21l5-6 4 4 7-9' stroke='white' stroke-width='2.5' fill='none'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <a class="brand" href="#/"><span class="mark" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 32 32"><path d="M6 23l7-8 5 5 9-11" stroke="currentColor" stroke-width="3.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span> Strategy Audit</a>
+      <nav class="top" aria-label="Main">
+        <a class="keep" href="#/new">Test a strategy</a>
+        <a href="#/sample">Sample audit</a>
+        <a href="#/demo">Demo</a>
+        <a href="#/submit">Request a manual audit</a>
+      </nav>
+    </div>
+  </header>
+  <main id="app" class="wrap" aria-live="polite"></main>
+  <footer class="bot">
+    <div class="wrap">
+      Historical research only. Backtests do not predict future performance and are not investment recommendations.
+      <span id="ds-foot"></span>
+    </div>
+  </footer>
+  <script src="/static/charts.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

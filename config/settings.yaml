@@ -1,0 +1,165 @@
+# ---------------------------------------------------------------------------
+# Moomoo paper-trading scanner: research configuration
+# ---------------------------------------------------------------------------
+# NOTE: There is deliberately NO setting that selects a live/real trading
+# environment. Paper orders are hard-wired to TrdEnv.SIMULATE in
+# scanner/paper_execution.py and cannot be changed from here.
+# ---------------------------------------------------------------------------
+
+opend:
+  host: 127.0.0.1
+  port: 11111
+  # Moomoo Singapore = FUTUSG. Only used to find the SIMULATE account.
+  security_firm: FUTUSG
+
+api:
+  max_retries: 4            # bounded: total attempts = 1 + max_retries
+  backoff_base_seconds: 1.0
+  backoff_max_seconds: 16.0
+  # Moomoo documents 60 requests / 30 s for history kline and snapshot.
+  # We stay under it.
+  requests_per_30s: 50
+  kline_page_size: 1000
+
+universe:
+  # Order of preference: csv (default). The Moomoo full-US list is only used
+  # for company-name lookups (cached weekly), NOT scanned wholesale, because
+  # Moomoo's historical-candle quota is ~100 distinct stocks per 7 days for
+  # accounts under HKD 10k.
+  source: csv
+  csv_path: data/universe.csv
+  min_price: 5.0
+  min_avg_dollar_volume: 20000000   # 20-day average, USD
+  benchmark: US.SPY
+
+history:
+  lookback_days_scanner: 120        # calendar days of daily bars for scanning
+  backtest_start: "2019-01-01"
+  backtest_end: null                # null = last completed session
+  autype: QFQ                       # forward-adjusted: required so splits are not fake "moves"
+
+earnings:
+  # Provider order. moomoo = get_earnings_calendar (7-day windows, cached).
+  # csv = data/earnings_calendar.csv (columns: code,date,timing)
+  providers: [moomoo, csv]
+  csv_path: data/earnings_calendar.csv
+  lookback_sessions: 2              # "reported within previous 1-2 completed sessions"
+  # UNKNOWN timing: exclude (safe default) or assume_after (treat as after close)
+  unknown_timing_policy: exclude
+
+signals:
+  earnings_drift:
+    min_abs_move_pct: 5.0           # prev close -> reaction-session close
+    min_relative_volume: 2.0        # vs 20-day average EXCLUDING the reaction day
+  volume_anomaly:
+    min_relative_volume: 2.0
+    avg_volume_window: 20
+  momentum_breakout:
+    lookbacks: [20, 50]             # prior N-day high, current bar excluded
+    consolidation_days: 10
+    consolidation_max_range_pct: 8.0
+    min_relative_volume: 1.5
+    rsi_max_bullish: 80.0
+  rsi_period: 14
+
+ranking:
+  weights:
+    earnings_drift: 3
+    volume_anomaly: 2
+    momentum_breakout: 2
+    multi_confirmation: 1
+  penalties:
+    rsi_extreme: -2                 # RSI >= rsi_extreme_level (bullish) or <= 100-level (bearish)
+    rsi_extreme_level: 80
+    poor_liquidity: -2
+    stale_data: -3
+    approximate_volume: -1
+
+freshness:
+  live_quote_max_age_minutes: 5
+
+account:
+  starting_cash: 300.0
+  max_position_pct: 0.5             # of paper equity per position
+  # Fractional shares are NOT assumed. Moomoo docs do not confirm fractional
+  # support for SIMULATE US orders. Only set true after you confirm it.
+  fractional_shares_confirmed: false
+  ledger_path: outputs/paper_ledger.json
+
+execution:
+  # Paper entries match the backtest: signal at a completed close, DAY limit
+  # order submitted before the next open. The limit is this % above the signal
+  # close, so it fills at the open unless the gap is bigger (then: no fill).
+  entry_limit_cap_pct: 5.0
+  # Exits use the same % as a floor below the reference price (marketable sell).
+  exit_limit_floor_pct: 5.0
+  # Sessions to hold. null = backtest.primary_horizon. Set from IN-SAMPLE results only.
+  hold_sessions: null
+  # Only these scanner signals may start a paper BUY. VOLUME_ANOMALY and
+  # MOMENTUM_BREAKOUT on non-earnings days showed no edge over random entry
+  # in-sample, so they are shown for information only.
+  buy_signals: [EARNINGS_DRIFT]
+
+swing:
+  # SWING SCREENER (scripts/run_swing_scan.py): whole-market idea list from live
+  # snapshots (no history quota). UNTESTED: there is no backtest behind it.
+  budget_usd: 300                   # one position, all-in, whole shares
+  min_price: 3.0                    # below this: penny-stock territory
+  max_price: 150.0                  # so $300 buys at least 2 shares
+  min_market_cap: 300000000         # skip micro-caps (pump-and-dump risk)
+  min_avg_turnover: 10000000        # USD/day, estimated: tradable without big spreads
+  min_move_pct: 4.0                 # today's move (or pre-market gap) in either direction
+  min_relative_volume: 2.0          # Moomoo volume_ratio: volume vs 5-day average at this time of day
+  max_stop_pct: 8.0                 # plan's stop: today's low, but never more than this % below
+  top_n: 15
+  long_only: true                   # show only UP moves (the account cannot short)
+  # --- PAPER swing trading via Telegram (/sbuy) ---
+  starting_cash: 300.0              # separate paper ledger from the earnings strategy
+  ledger_path: outputs/swing_ledger.json
+  max_hold_sessions: 5              # time exit: sold at the open after this many sessions
+  entry_limit_pct: 1.0              # buy limit = current price + this %
+  max_chase_pct: 3.0                # refuse if the price ran more than this % above the idea price
+  idea_max_age_minutes: 90          # /sbuy only from a scan this recent
+  auto_scan_et: "10:15"             # daily ideas sent to Telegram (ET; 22:15 SGT in US summer time)
+  offer_top_n: 5
+  stop_check_seconds: 120           # how often the bot checks stops during US hours
+  auto_exit: true                   # approved tickets include automatic stop / time-exit sells
+
+costs:
+  # Moomoo SG: US commission currently 0; platform fee USD 0.99/order after the
+  # promo year. VERIFY against your own fee schedule. Never assumed zero forever.
+  slippage_bps: 10                  # per side
+  commission_per_order: 0.0
+  platform_fee_per_order: 0.99
+  regulatory_fee_bps_on_sells: 0.3  # SEC fee + FINRA TAF approximation (sells only)
+
+backtest:
+  # Trading sessions; entry = next open after signal. Short horizons cannot
+  # recover ~1.5% round-trip costs at $150; post-earnings drift is documented
+  # over weeks, so longer holds are measured too. Choose primary_horizon from
+  # IN-SAMPLE results only.
+  horizons: [1, 2, 3, 5, 10, 20, 60]
+  # Chosen 2026-09-24 from IN-SAMPLE results only (run 20260924T151939Z): h=1..5
+  # lose to costs; h=20 BULLISH earnings net +2.4%/trade, positive in 27/27
+  # sensitivity cells. OOS still unopened.
+  primary_horizon: 20               # drives the $300 account sim and sensitivity grid
+  # When a trade is closed after h sessions:
+  #   next_open = at the OPEN of the following session (a sell order can be
+  #               placed the evening before in Singapore: US open = 21:30/22:30 SGT)
+  #   close     = at the CLOSE of the h-th session (US close = 04:00/05:00 SGT)
+  # Paper trading uses the same rule, so the backtest measures what you can do.
+  exit_at: next_open
+  in_sample_fraction: 0.70
+  min_sample_size: 30               # below this => LOW SAMPLE SIZE
+  bootstrap_resamples: 2000
+  random_seed: 42
+  trade_notional_for_costs: 150.0   # $300 x 50%: fixed fees are converted at this size
+  sensitivity:
+    min_abs_move_pct: [4.0, 5.0, 6.0]
+    min_relative_volume: [1.5, 2.0, 2.5]
+    breakout_lookback: [20, 30, 50]
+  standalone:
+    # VOLUME_ANOMALY / MOMENTUM_BREAKOUT on NON-earnings days, same entry/exit
+    # rules. Trades of the same symbol+signal never overlap within a horizon.
+    enabled: true
+    exclude_earnings_window: true   # drop event day, reaction session and the next day
