@@ -162,7 +162,8 @@ async function inputPage() {
     try {
       store.set("sa_text", ta.value);
       const res = await api("/api/interpret", { method: "POST", body: { text: ta.value, anonymous_user_id: anon } });
-      store.set("sa_interp", { result: res, choices: {}, name: (family && store.get("sa_edit_name")) || (res.draft ? res.draft.name : "") });
+      store.set("sa_interp", { result: res, choices: {}, name: (family && store.get("sa_edit_name")) ||
+        (res.draft && res.draft.entry_conditions && res.draft.entry_conditions.length ? res.draft.name : "") });
       location.hash = "#/confirm";
     } catch (e) { msg.replaceChildren(errorBox(e)); btn.disabled = false; btn.textContent = "INTERPRET STRATEGY"; }
   }
@@ -213,12 +214,30 @@ async function confirmPage() {
     errs.replaceChildren();
     confirmBtn.disabled = true;
     if (unsupported.length) { summary.replaceChildren(); return; }
+    const hasRule = (res.draft && res.draft.entry_conditions && res.draft.entry_conditions.length) ||
+      blocking.some(i => i.options.some(o => o.patch.some(p => p.op === "add_condition")));
+    if (!hasRule) {                                    // nothing testable was recognised: ask for a rephrase, no raw errors
+      summarize(null);
+      errs.append(h("div", { class: "banner fail", role: "alert" },
+        h("strong", {}, "We couldn't find a rule we can test in your description. "),
+        "Nothing will run. Please rephrase using rules like: ",
+        h("span", { class: "mono" }, "RSI(14) below 30"), ", ", h("span", { class: "mono" }, "above its 50-day simple moving average"), ", ",
+        h("span", { class: "mono" }, "fallen 5% over 5 days"), ", ", h("span", { class: "mono" }, "volume 2x its 20-day average"), ", ",
+        h("span", { class: "mono" }, "new 20-day high"), ". Then add how long to hold, e.g. ",
+        h("span", { class: "mono" }, "hold 10 days"), "."));
+      return;
+    }
     if (!done) { summarize(null); return; }
     const patches = blocking.flatMap(i => i.options.length ? i.options[st.choices[i.id]].patch : []);
     try {
       resolved = await api("/api/resolve", { method: "POST", body: { draft: res.draft, patches, name: nameIn.value || null } });
       if (resolved.spec) { confirmBtn.disabled = false; summarize(resolved); }
-      else { summarize(null); errs.append(errorBox(new Error("These rules are not valid yet: " + resolved.errors.join("; ")))); }
+      else {
+        summarize(null);
+        const friendly = resolved.errors.map(e => e.startsWith("entry_conditions:") && e.includes("at least 1") ?
+          "no entry rule was recognised" : e.startsWith("exit") ? "no holding period was set" : e);
+        errs.append(errorBox(new Error("These rules can't run yet: " + friendly.join("; ") + ". Use EDIT to rephrase.")));
+      }
     } catch (e) { errs.append(errorBox(e)); }
   }
   function summarize(r) {

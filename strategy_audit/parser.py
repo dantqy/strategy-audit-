@@ -122,7 +122,8 @@ VAGUE = [
 FILLER = re.compile(r"\b(buy|buying|purchase|go|long|enter|entry|stocks?|shares?|the|a|an|it|its|they|them|when|if|i|we|"
                     r"you|my|strategy|and|then|also|only|is|are|has|have|been|remains?|stays?|still|trade|trading|of|"
                     r"to|at|on|for|with|position|positions|that|this|which|should|will|would|us|all|any|every|some|"
-                    r"just|simply|please|condition|conditions|rule|rules|signal|signals|following|day|days)\b")
+                    r"just|simply|please|condition|conditions|rule|rules|signal|signals|following|day|days|"
+                    r"more|there|theres|generally|usually|etc)\b")
 
 RSI_RE = re.compile(r"\brsi\s*(?:\(\s*(\d+)\s*\)|(\d+)(?=\s))?\s*(?:is\s+|falls?\s+|fell\s+|drops?\s+|dropped\s+|goes\s+|gets\s+|"
                     r"rises?\s+|rose\s+|moves?\s+|stays?\s+|remains?\s+|crosses\s+|crossed\s+)*"
@@ -145,6 +146,12 @@ VOL_RE = re.compile(r"\bvolume\s+(?:is\s+)?(?:at\s+least\s+|more\s+than\s+|above
                     r"(?:\s+(?:of\s+|over\s+)?(?:the\s+)?(?:previous|past|last|prior)?\s*" + NUM + r"\s*" + UNIT + r")?")
 HIGH_RE = re.compile(r"\b(?:new|makes?\s+a|hits?\s+a|closes?\s+at\s+a|breaks?\s+(?:above|out\s+(?:above|to|of))?\s*(?:a|the)?)\s*"
                      + NUM + r"\s*[- ]?\s*(day|session|week)s?\s+(high|low)")
+# "10%, 15%, 20% drop from the 52wk high", "15% below its 52-week high", "down 20% off the 200-day high"
+DRAWDOWN_RE = re.compile(r"(?:(?:down|fallen|fell|dropped|drops?|declined|off|trading|trades)\s+(?:by\s+)?(?:at\s+least\s+|more\s+than\s+)?)?"
+                         r"((?:\d+(?:\.\d+)?\s*%\s*(?:,|or|and|/)?\s*)+)\s*(?:etc\.?\s*)?"
+                         r"(?:drop|decline|fall|dip|pullback|correction|down|lower)?\s*(?:etc\.?\s*)?(?:in\s+price\s*)?"
+                         r"(?:from|below|off|under)\s+(?:its|the|their|a)?\s*(?:historical(?:ly)?\s+)?"
+                         r"(?:(52)\s*[- ]?\s*(?:wk|week)s?|(\d+)\s*[- ]?\s*(?:day|session)s?)\s*(?:historical(?:ly)?\s+)?high")
 PRICE_RE = re.compile(r"\b(?:price|trading|trades|stock|close|closes)\s+(?:is\s+)?(above|below|over|under)\s+\$\s*(\d+(?:\.\d+)?)")
 RS_RE = re.compile(r"\b(?:outperform\w*|stronger\s+than|beat\w*|better\s+than)\s+(?:the\s+)?(spy|s&p\s*500|market)\s+"
                    r"(?:over|in|during)\s+(?:the\s+)?(?:past|last|previous|prior)?\s*" + NUM + r"\s*" + UNIT)
@@ -247,6 +254,22 @@ def interpret(text: str) -> dict:
         ind = m.group(2).upper()
         ctx.cond({"indicator": "CLOSE", "operator": m.group(1), "comparison_indicator": ind,
                   "comparison_period": int(m.group(3))}, m.group(0), f"Close {m.group(1)} {ind}({m.group(3)})")
+        eat(m)
+    for m in DRAWDOWN_RE.finditer(t):
+        pcts = [float(x) for x in re.findall(r"(\d+(?:\.\d+)?)\s*%", m.group(1))]
+        n = 252 if m.group(2) else min(252, max(5, int(m.group(3))))
+        label = "52-week" if m.group(2) else f"{n}-session"
+
+        def dd(p, n=n):
+            return {"indicator": "CLOSE", "operator": "<=", "comparison_indicator": "HIGH", "comparison_period": n,
+                    "comparison_multiplier": round(1 - p / 100, 4)}
+        pcts = [p for p in pcts if 0 < p < 50]
+        if len(pcts) == 1:
+            ctx.cond(dd(pcts[0]), m.group(0), f"Close at least {pcts[0]:g}% below the prior {label} high")
+        elif pcts:
+            ctx.issue("ambiguous", f"Several drop levels were given ({', '.join(f'{p:g}%' for p in pcts)}). A V0 rule tests "
+                      "one threshold at a time; the audit's sensitivity test checks nearby levels automatically.",
+                      [(f"At least {p:g}% below the prior {label} high", [_add(dd(p))]) for p in pcts], m.group(0))
         eat(m)
     for rx, sign in ((RET_DOWN_RE, -1), (RET_UP_RE, 1)):
         for m in rx.finditer(t):

@@ -68,6 +68,21 @@ class TestParser(unittest.TestCase):
         r = interpret("Buy large cap when RSI below 30. next open. hold 5 days.")
         self.assertTrue(any(i["kind"] == "missing" and "RSI period" in i["message"] for i in r["issues"]))
 
+    def test_drop_from_52_week_high(self):
+        """Real user wording (2026-09-25): several drop levels -> one question, never a silent pick."""
+        r = interpret("i buy more when theres a 10%, 15%, 20% drop etc. in price from 52wk historically high")
+        dd = [i for i in r["issues"] if "drop levels" in i["message"]]
+        self.assertEqual([o["label"] for o in dd[0]["options"]],
+                         ["At least 10% below the prior 52-week high", "At least 15% below the prior 52-week high",
+                          "At least 20% below the prior 52-week high"])
+        self.assertEqual(r["unmatched"], [])
+        ok = interpret("Buy large-cap stocks when they are 15% below their 52-week high. Next open, hold 60 days.")
+        self.assertEqual(ok["status"], "ok")
+        c = StrategySpec.model_validate(ok["spec"]).entry_conditions[0]
+        self.assertEqual(c.describe(), "CLOSE <= 0.85 x HIGH(252)")
+        down = interpret("buy when down 20% off the 200 day high, next open, hold 20 days, large cap")
+        self.assertEqual(down["status"], "ok")                     # not misread as a 20% N-day return
+
     def test_patches_are_whitelisted_and_revalidated(self):
         with self.assertRaises(ValueError):
             apply_patches({}, [{"op": "exec", "value": "import os"}])
