@@ -19,6 +19,7 @@ from strategy_audit.quant import robustness as R
 from strategy_audit.quant.data import MockProvider
 from strategy_audit.quant.engine import Market, condition_funnel, generate_trades, indicator_series, net_return, run_backtest
 from strategy_audit.quant.lookahead import lookahead_audit
+from strategy_audit.quant.plan import PlanSpec, earliest_start, run_plan, simulate
 from strategy_audit.schema import StrategySpec
 from strategy_audit.service import AuditService, NotFound
 
@@ -375,6 +376,81 @@ class TestAPI(unittest.TestCase):
     def test_events_whitelisted(self):
         self.assertEqual(self.c.post("/api/events", json={"name": "report_viewed"}).status_code, 200)
         self.assertEqual(self.c.post("/api/events", json={"name": "keystrokes"}).status_code, 422)
+
+    def test_plan_endpoints(self):
+        spec = {"asset": "MOCK.SPY", "monthly_amount": 500,
+                "dip": {"funding": "EXTRA", "extra_amount": 300, "tiers": [{"drawdown": 0.05}, {"drawdown": 0.1}]}}
+        r = self.c.post("/api/plans", json={"spec": spec, "anonymous_user_id": "planner"})
+        self.assertEqual(r.status_code, 200, r.text)
+        got = self.c.get("/api/plans/" + r.json()["plan_id"]).json()
+        self.assertEqual(got["plan"], r.json()["plan"])
+        self.assertTrue(got["synthetic_data"])
+        self.assertEqual(self.c.post("/api/plans", json={"spec": {**spec, "asset": "US.NOPE"}}).status_code, 422)
+        self.assertEqual(self.c.post("/api/plans", json={"spec": {**spec, "leverage": 2}}).status_code, 422)
+        self.assertEqual(self.c.get("/api/plans/plan_missing").status_code, 404)
+        self.assertEqual(self.c.post("/api/plans", json={"spec": spec, "anonymous_user_id": "planner"}).json()["variants_tried"], 2)
+
+
+# ------------------------------------------------------------------ investment plans
+class TestPlan(unittest.TestCase):
+    BARS = MOCK.benchmark()
+
+    def plan(self, **dip):
+        return PlanSpec(asset="MOCK.SPY", monthly_amount=500, fee_per_order=0, slippage_bps=0,
+                        dip={"tiers": [{"drawdown": 0.05, "deploy": 0.5}, {"drawdown": 0.1, "deploy": 1}], **dip})
+
+    def test_plain_dca_matches_hand_calculation(self):
+        b = self.BARS
+        start = earliest_start(b)
+        r = simulate(b, 500, start, None, 0.0, 0.0)
+        firsts, seen = [], set()
+        for d in b.index:
+            if d >= start and (d.year, d.month) not in seen:
+                seen.add((d.year, d.month))
+                firsts.append(d)
+        units = sum(500 / b.loc[d, "open"] for d in firsts)
+        self.assertAlmostEqual(r["final_value"], units * b["close"].iloc[-1], places=6)
+        self.assertEqual(r["put_in"], 500 * len(firsts))
+
+    def test_dip_buys_fill_next_open_and_rearm_only_after_new_high(self):
+        b = self.BARS
+        r = simulate(b, 500, earliest_start(b), self.plan(funding="EXTRA", extra_amount=200).dip, 0.0, 0.0)
+        self.assertTrue(r["buys"])
+        hi = b["close"].rolling(252, min_periods=252).max()
+        for x in r["buys"]:
+            self.assertEqual(x["date"], mc.next_trading_day(x["signal_date"]))       # decided at close, filled next open
+            self.assertAlmostEqual(x["price"], b.loc[x["date"], "open"])
+            self.assertGreaterEqual(1 - b.loc[x["signal_date"], "close"] / hi[x["signal_date"]], x["tier"] - 1e-9)
+        for tier in (0.05, 0.1):                                                     # same level twice needs a new high between
+            ds = [x["signal_date"] for x in r["buys"] if x["tier"] == tier]
+            for a, c in zip(ds, ds[1:]):
+                win = b.loc[a:c]
+                self.assertTrue((win["close"].iloc[1:] >= hi.loc[a:c].iloc[1:] - 1e-12).any(), (tier, a, c))
+
+    def test_reserve_mode_same_money_and_nothing_lost(self):
+        b = self.BARS
+        out = run_plan(self.plan(funding="RESERVE", reserve_share=0.3), b)
+        self.assertEqual(out["plan"]["put_in"], out["plain"]["put_in"])
+        for row in out["by_start_year"]:
+            self.assertEqual(row["plan_in"], row["plain_in"])
+        self.assertIn(out["verdict"]["label"].split(" (")[0], {"DIP-BUYING CAME OUT AHEAD", "PLAIN MONTHLY INVESTING CAME OUT AHEAD",
+                                                                "MIXED: DEPENDS ON THE START DATE"})
+        # cash never vanishes: with 0% interest and no buys ever, value = money in
+        never = run_plan(self.plan(funding="RESERVE", reserve_share=0.9, tiers=[{"drawdown": 0.6}]), b)
+        self.assertGreaterEqual(never["plan"]["cash_end"], 0.9 * never["plan"]["put_in"] - 1e-6)
+
+    def test_plan_spec_rejects_bad_input(self):
+        bad = [{"tiers": [{"drawdown": 0.2}, {"drawdown": 0.1}], "funding": "EXTRA", "extra_amount": 100},
+               {"tiers": [{"drawdown": 0.1}], "funding": "RESERVE"},
+               {"tiers": [{"drawdown": 0.9}], "funding": "EXTRA", "extra_amount": 100},
+               {"tiers": [], "funding": "EXTRA", "extra_amount": 100}]
+        for d in bad:
+            with self.assertRaises(Exception, msg=str(d)):
+                PlanSpec(asset="MOCK.SPY", monthly_amount=500, dip=d)
+        with self.assertRaises(Exception):
+            PlanSpec(asset="MOCK.SPY", monthly_amount=500, name="<script>")
+        with self.assertRaises(ValueError):
+            run_plan(PlanSpec(asset="MOCK.SPY", monthly_amount=500, start_month="2010-01"), self.BARS)
 
 
 if __name__ == "__main__":

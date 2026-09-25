@@ -89,7 +89,7 @@ function demoBar(step) {
 const routes = [
   [/^#?\/?$/, landing], [/^#\/new$/, inputPage], [/^#\/demo$/, demoStart], [/^#\/confirm$/, confirmPage],
   [/^#\/results\/([\w-]+)$/, resultsPage], [/^#\/audit\/([\w-]+)$/, auditPage], [/^#\/report\/([\w-]+)$/, reportPage],
-  [/^#\/family\/([\w-]+)$/, lineagePage], [/^#\/sample$/, samplePage], [/^#\/submit$/, submitPage], [/^#\/admin$/, adminPage],
+  [/^#\/family\/([\w-]+)$/, lineagePage], [/^#\/plan$/, planPage], [/^#\/plan\/([\w-]+)$/, planResultPage], [/^#\/sample$/, samplePage], [/^#\/submit$/, submitPage], [/^#\/admin$/, adminPage],
 ];
 async function route() {
   const hash = location.hash || "#/";
@@ -118,7 +118,9 @@ async function landing() {
         "overfitting, transaction costs, market regimes and other common backtesting traps."),
       h("div", { class: "btn-row", style: "margin-top:26px" },
         h("a", { class: "btn primary big", href: "#/new" }, "TEST MY STRATEGY"),
-        h("a", { class: "btn big", href: "#/sample" }, "VIEW SAMPLE AUDIT"))),
+        h("a", { class: "btn big", href: "#/sample" }, "VIEW SAMPLE AUDIT")),
+      h("p", { class: "small", style: "margin-top:14px" }, "Investing monthly for the long term instead of trading? ",
+        h("a", { href: "#/plan" }, "Test an investment plan →"))),
     h("section", { class: "grid g4 steps", style: "margin-top:34px" },
       steps.map(([k, t]) => h("div", { class: "card" }, h("div", { class: "k" }, k), h("div", { style: "margin-top:6px" }, t)))),
     h("section", { class: "grid g2", style: "margin-top:34px" },
@@ -205,6 +207,10 @@ async function confirmPage() {
     } catch { /* server unreachable: fall back to the saved interpretation */ }
   }
   const res = st.result;
+  const planHint = /\b(dca|dollar[- ]cost|every month|each month|monthly|long[- ]term|never sell|havent (really )?sold)\b/i.test(text || "")
+    ? h("div", { class: "banner info" }, h("strong", {}, "Sounds like an investment plan? "),
+        "This page tests trades with a fixed holding period. For monthly investing (with or without buying extra on dips), use ",
+        h("a", { href: "#/plan" }, "the investment plan tester"), ".") : null;
   const summary = h("div");
   const errs = h("div");
   const nameIn = h("input", { value: st.name || "", maxlength: "80", "aria-label": "Strategy name" });
@@ -285,6 +291,7 @@ async function confirmPage() {
     demoBar(2),
     h("h1", {}, "Here's how we understood your strategy"),
     h("p", { class: "muted" }, "Nothing runs until you confirm. Anything unclear is highlighted below, and we will not guess."),
+    planHint,
     unsupported.length ? h("div", {},
       h("div", { class: "banner fail" }, h("strong", {}, "This strategy can't be tested in V0. "),
         "Unsupported parts are rejected, not forced into the engine."),
@@ -631,6 +638,177 @@ async function submitPage() {
       field("notes", "Optional notes", h("textarea", { maxlength: "2000", style: "min-height:80px" })),
       h("p", { class: "small muted" }, "We store only what you type here plus a random anonymous browser ID. No email or name is required."),
       btn, out));
+}
+
+// ------------------------------------------------------------------ investment plans
+const assetName = (code, opts) => code === opts.benchmark ? "SPY (S&P 500 ETF)" : code.replace(/^[A-Z]+\./, "");
+
+async function planPage() {
+  const opts = await api("/api/plan-options");
+  const prev = store.get("sa_plan_spec") || {};
+  const pd = prev.dip || {};
+  const n = (attrs) => h("input", { type: "number", ...attrs });
+  const asset = h("select", {}, [opts.benchmark, ...opts.assets].map(c =>
+    h("option", { value: c, selected: c === (prev.asset || opts.benchmark) }, assetName(c, opts))));
+  const monthly = n({ min: "10", max: "100000", step: "10", value: prev.monthly_amount ?? 500 });
+  const start = h("input", { type: "month", min: opts.earliest_start, max: opts.last_bar.slice(0, 7),
+    value: prev.start_month || opts.earliest_start });
+  const useDip = h("input", { type: "checkbox", checked: prev.asset ? !!prev.dip : true, style: "width:auto" });
+  const tierBox = h("div");
+  let tiers = (pd.tiers || [{ drawdown: .10, deploy: 1 / 3 }, { drawdown: .15, deploy: .5 }, { drawdown: .20, deploy: 1 }])
+    .map(t => ({ dd: Math.round(t.drawdown * 100), dep: Math.round(t.deploy * 100) }));
+  const fundRes = h("input", { type: "radio", name: "fund", value: "RESERVE", checked: pd.funding !== "EXTRA", style: "width:auto" });
+  const fundExtra = h("input", { type: "radio", name: "fund", value: "EXTRA", checked: pd.funding === "EXTRA", style: "width:auto" });
+  const reserve = n({ min: "5", max: "90", step: "5", value: Math.round((pd.reserve_share ?? .25) * 100), style: "width:90px" });
+  const extra = n({ min: "10", max: "1000000", step: "10", value: pd.extra_amount ?? 500, style: "width:120px" });
+  const cashRate = n({ min: "0", max: "10", step: "0.5", value: ((pd.cash_rate ?? 0) * 100), style: "width:90px" });
+  const fee = n({ min: "0", max: "20", step: "0.01", value: prev.fee_per_order ?? opts.defaults.fee_per_order });
+  const slip = n({ min: "0", max: "100", step: "1", value: prev.slippage_bps ?? opts.defaults.slippage_bps });
+  const dipBox = h("div", { class: "card", style: "margin-top:12px" });
+  const msg = h("div");
+  const btn = h("button", { class: "btn primary big", onclick: go }, "RUN PLAN");
+
+  function drawTiers() {
+    const reserveMode = fundRes.checked;
+    tierBox.replaceChildren(...tiers.map((t, i) => {
+      const dd = n({ min: "3", max: "60", step: "1", value: t.dd, style: "width:80px", "aria-label": `Dip level ${i + 1} drop %` });
+      dd.addEventListener("input", () => t.dd = +dd.value);
+      const dep = n({ min: "5", max: "100", step: "5", value: t.dep, style: "width:80px", "aria-label": `Dip level ${i + 1} share of cash` });
+      dep.addEventListener("input", () => t.dep = +dep.value);
+      return h("div", { class: "tier-row" },
+        h("span", {}, "At"), dd, h("span", {}, "% below the 52-week high, spend"),
+        reserveMode ? [dep, h("span", {}, "% of the saved cash")] : h("span", {}, "the extra amount"),
+        tiers.length > 1 ? h("button", { class: "linkish", type: "button", "aria-label": `Remove dip level ${i + 1}`,
+          onclick: () => { tiers.splice(i, 1); drawTiers(); } }, "✕ remove") : null);
+    }), tiers.length < 5 ? h("button", { class: "btn", type: "button", style: "margin-top:10px",
+      onclick: () => { tiers.push({ dd: (tiers.at(-1)?.dd || 10) + 10, dep: 100 }); drawTiers(); } }, "+ Add a dip level") : null);
+  }
+  function drawDip() {
+    dipBox.style.display = useDip.checked ? "" : "none";
+    dipBox.replaceChildren(
+      h("h3", {}, "Where does the dip money come from?"),
+      h("label", { class: "f", style: "display:flex;gap:10px;align-items:center;font-weight:400" }, fundRes,
+        h("span", {}, "Hold back ", reserve, "% of every monthly amount as cash, and spend it on dips ",
+          h("span", { class: "muted" }, "(same total money as plain investing: a fair head-to-head)"))),
+      fundRes.checked ? h("div", { style: "margin:0 0 6px 34px" }, "Saved cash earns ", cashRate, "% a year while it waits") : null,
+      h("label", { class: "f", style: "display:flex;gap:10px;align-items:center;font-weight:400" }, fundExtra,
+        h("span", {}, "Add new money: $", extra, " at each dip buy ", h("span", { class: "muted" }, "(on top of the monthly amount)"))),
+      h("h3", { style: "margin-top:16px" }, "Dip levels"),
+      h("p", { class: "small muted" }, "Each level buys once, then waits until the price makes a new 52-week high before it can buy again."),
+      tierBox);
+    drawTiers();
+  }
+  [fundRes, fundExtra].forEach(r => r.addEventListener("change", drawDip));
+  useDip.addEventListener("change", drawDip);
+
+  async function go() {
+    const spec = { asset: asset.value, monthly_amount: +monthly.value, start_month: start.value || null,
+      fee_per_order: +fee.value, slippage_bps: +slip.value, dip: null };
+    if (useDip.checked) {
+      const funding = fundRes.checked ? "RESERVE" : "EXTRA";
+      spec.dip = { funding, tiers: tiers.map(t => ({ drawdown: t.dd / 100, deploy: funding === "RESERVE" ? t.dep / 100 : 1 })) };
+      if (funding === "RESERVE") { spec.dip.reserve_share = +reserve.value / 100; spec.dip.cash_rate = +cashRate.value / 100; }
+      else spec.dip.extra_amount = +extra.value;
+    }
+    busy(btn, "Simulating every month…");
+    try {
+      const out = await api("/api/plans", { method: "POST", body: { spec, anonymous_user_id: anon } });
+      store.set("sa_plan_spec", spec);
+      location.hash = "#/plan/" + out.plan_id;
+    } catch (e) { msg.replaceChildren(errorBox(e)); btn.disabled = false; btn.textContent = "RUN PLAN"; }
+  }
+  const lab = (t, el, hint) => h("div", {}, h("label", { class: "f" }, t), el, hint ? h("div", { class: "small muted", style: "margin-top:4px" }, hint) : null);
+  render(
+    h("div", { class: "eyebrow" }, "Investment plan"),
+    h("h1", {}, "Test a monthly investing plan"),
+    h("p", { class: "lead" }, "For long-term investing rather than trading: put in a fixed amount every month, optionally buy extra " +
+      "after the market falls, and never sell. We compare it with plain monthly investing in the same asset."),
+    h("div", { class: "card", style: "max-width:820px" },
+      h("div", { class: "grid g2" },
+        lab("What to buy", asset, "US data only: SPY or one of the 93 large US stocks."),
+        lab("Monthly amount ($)", monthly),
+        lab("Start month", start, `Earliest ${opts.earliest_start}: the 52-week high needs a year of history. Runs to ${opts.last_bar}.`)),
+      h("label", { class: "f", style: "display:flex;gap:10px;align-items:center;margin-top:18px" }, useDip,
+        "Buy extra after drops from the 52-week high"),
+      dipBox,
+      h("details", { class: "sec", style: "margin-top:14px" }, h("summary", {}, "Costs"),
+        h("div", { class: "body grid g2" }, lab("Fee per order ($)", fee), lab("Slippage per buy (basis points)", slip))),
+      h("div", { class: "btn-row", style: "margin-top:18px" }, btn), msg),
+    h("p", { class: "disclaimer" }, "Historical research only, not investment advice. Past returns do not predict future returns."));
+  drawDip();
+}
+
+async function planResultPage(planId) {
+  const r = await api("/api/plans/" + planId);
+  const opts = await api("/api/plan-options");
+  const s = r.spec, P = r.plain, Q = r.plan, v = r.verdict;
+  const eq = h("div");
+  const money = (x) => usd(x);
+  const cols = Q ? ["", "Plain monthly investing", "Your plan"] : ["", "Plain monthly investing"];
+  const row = (label, f) => Q ? [label, f(P), f(Q)] : [label, f(P)];
+  const rows = [
+    row("Money put in", x => money(x.put_in)), row("Value at the end", x => money(x.final_value)),
+    row("Profit", x => money(x.profit)), row("Yearly return on money put in", x => pct(x.irr, 2)),
+    row("Largest fall in account value", x => pct(x.worst_drop)), row("Fees paid", x => money(x.fees)),
+    ...(Q && s.dip.funding === "RESERVE" ? [row("Cash still waiting at the end", x => money(x.cash_end)),
+      row("Average share of the account held in cash", x => pctAbs(x.avg_cash_share))] : [])];
+  render(
+    h("div", { class: "eyebrow" }, `Investment plan · ${assetName(s.asset, opts)} · ${P.start} → ${P.end} · ${usd(s.monthly_amount)} a month`),
+    h("h1", {}, Q ? "Your plan vs plain monthly investing" : "Plain monthly investing"),
+    r.synthetic_data ? h("div", { class: "banner fail" }, h("strong", {}, "DEMO DATA — NOT REAL MARKET DATA.")) : null,
+    s.asset !== opts.benchmark && r.survivorship_biased ? h("div", { class: "banner warn" }, h("strong", {}, "⚠ DATASET LIMITATION. "),
+      "This stock is in the dataset because it is a large company today. Picking today's winners makes past results look better.") : null,
+    v ? h("div", { class: "evidence promising", style: "margin-top:16px" },
+      h("div", { class: "eyebrow" }, "Result across start dates"), h("div", { class: "lvl" }, v.label),
+      h("p", {}, `Started in each of ${v.n} different years, the plan earned a higher yearly return in ${v.ahead}, a lower one in ` +
+        `${v.behind}, and about the same (within 0.1 points) in ${v.ties}.` +
+        (v.median_irr_diff != null ? ` Typical difference: ${(v.median_irr_diff * 100).toFixed(2)} percentage points a year.` : "")),
+      v.notes.length ? h("ul", {}, v.notes.map(x => h("li", {}, x))) : null) : null,
+    h("div", { class: "card", style: "margin-top:18px" }, h("h3", {}, "Account value over time"), eq,
+      h("div", { class: "legend" },
+        Q ? h("span", {}, h("i", { class: "sw", style: "background:var(--c-strat)" }), "Your plan") : null,
+        h("span", {}, h("i", { class: "sw", style: "background:var(--c-spy)" }), "Plain monthly investing"),
+        h("span", {}, h("i", { class: "sw dash" }), "Money put in (the gap above it is profit)"))),
+    h("div", { class: "card", style: "margin-top:18px" }, h("h3", {}, `Starting ${P.start}`), tbl(cols.map((c, i) => i ? H(c) : c), rows)),
+    r.by_start_year.length ? h("div", { class: "card", style: "margin-top:18px" },
+      h("h3", {}, "Does it depend on when you started?"),
+      h("p", { class: "small muted" }, "The same comparison from each January, all running to the end of the data. " +
+        "Yearly return = return on money put in, so plans that put in different amounts are compared fairly."),
+      tbl(["Start", H("Plain: yearly return"), H("Your plan: yearly return"), H("Difference"), H("Plain: end value"),
+           H("Your plan: end value"), H("Dip buys")],
+        r.by_start_year.map(x => [x.start, pct(x.plain_irr, 2), pct(x.plan_irr, 2),
+          x.plan_irr != null && x.plain_irr != null ? ((x.plan_irr - x.plain_irr) * 100).toFixed(2) + " pts" : "n/a",
+          money(x.plain_value) + (x.plain_in !== x.plan_in ? ` (in ${money(x.plain_in)})` : ""),
+          money(x.plan_value) + (x.plain_in !== x.plan_in ? ` (in ${money(x.plan_in)})` : ""), x.dip_buys]))) : null,
+    Q ? h("div", { class: "card", style: "margin-top:18px" }, h("h3", {}, `Dip buys (${r.dip_buys.length})`),
+      r.dip_buys.length ? tbl(["Signal (close)", "Bought (next open)", H("Below 52-week high"), H("Level"), H("Amount"), H("Price")],
+        r.dip_buys.map(b => [b.signal_date, b.date, pctAbs(b.drawdown, 1), pctAbs(b.tier), money(b.amount), num(b.price)]))
+        : h("p", {}, "No dip level was reached in this period.")) : null,
+    r.variants_tried > 1 ? h("div", { class: "banner warn", style: "margin-top:18px" },
+      h("strong", {}, `You've run ${r.variants_tried} plan variants on this data. `),
+      "Choosing the best of many settings on the same history makes that setting look better than it is likely to be.") : null,
+    h("details", { class: "sec", style: "margin-top:18px" }, h("summary", {}, "How this was calculated"),
+      h("div", { class: "body" }, h("ul", {}, [
+        "Monthly buy at the open of the first trading day of each month.",
+        "52-week high = highest daily close of the last 252 trading days. A dip is checked at the close and bought at the next day's open, so nothing uses information from the future.",
+        "Each dip level buys once, then re-arms only after a new 52-week high.",
+        `Fees: ${usd(s.fee_per_order)} per order plus ${s.slippage_bps} basis points slippage. Fractional units. No taxes, no currency conversion.`,
+        "Prices are adjusted for splits and dividends, so dividends are treated as reinvested (approximately).",
+        "Yearly return on money put in is money-weighted (internal rate of return): it accounts for when each dollar went in.",
+        "Largest fall in account value includes new money arriving, so it understates how far the asset itself fell.",
+        "US data only. Singapore or Irish-domiciled funds are not in the dataset. One historical period, mostly a rising market.",
+        `Dataset ${r.dataset_version} · engine ${r.engine_version}`].map(x => h("li", {}, x))))),
+    h("div", { class: "btn-row", style: "margin-top:20px" },
+      h("a", { class: "btn primary", href: "#/plan" }, "Change settings"),
+      h("button", { class: "btn", onclick: (e) => { navigator.clipboard?.writeText(location.href); e.target.textContent = "Link copied"; } }, "Copy link")),
+    h("p", { class: "disclaimer" }, "Historical research only, not investment advice. Past returns do not predict future returns."));
+  requestAnimationFrame(() => {
+    const c = r.chart, series = [];
+    series.push({ name: "Plain", values: c.plain_value, color: "--c-spy" });
+    if (c.plan_value) series.push({ name: "Your plan", values: c.plan_value, color: "--c-strat", width: 2.5 });
+    series.push({ name: "Money put in", values: c.plan_in || c.plain_in, color: "--muted", width: 1.5, dash: true });
+    Charts.line(eq, { dates: c.dates, fmt: v => "$" + Math.round(v / 1000) + "k", tipFmt: v => usd(v), series });
+  });
 }
 
 // ------------------------------------------------------------------ admin

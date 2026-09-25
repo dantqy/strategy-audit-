@@ -137,3 +137,12 @@ footer.bot { border-top: 1px solid var(--border); padding: 26px 0 40px; color: v
   body { background: #fff; color: #000; } .card, .evidence, details.sec { box-shadow: none; }
   details.sec > .body { display: block; } main { padding: 0; }
 }
+
+/* investment plan form + chart legend */
+.tier-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.tier-row input { width: 72px; padding: 8px 10px; }
+button.linkish { background: none; border: 0; color: var(--muted); cursor: pointer; font: inherit; font-size: 14px; padding: 4px 6px; }
+button.linkish:hover { color: var(--fail); }
+.legend { display: flex; flex-wrap: wrap; gap: 18px; font-size: 13px; color: var(--muted); margin-top: 8px; }
+.legend .sw { display: inline-block; width: 18px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+.legend .sw.dash { background: repeating-linear-gradient(90deg, var(--muted) 0 6px, transparent 6px 11px); }

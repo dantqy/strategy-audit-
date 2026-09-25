@@ -58,6 +58,25 @@ score). The final **evidence assessment** is one of: *No evidence of historical 
 Promising but unstable · Relatively robust*. It never says buy, sell, safe or recommended. Rules are fixed in
 `assess.py`.
 
+## Investment-plan tester (`#/plan`)
+
+Long-term investors don't trade in and out, so the trade audit doesn't fit them. This page simulates a
+monthly plan (dollar-cost averaging), optionally buying extra after 10/15/20% drops from the 52-week high,
+and compares it with plain monthly investing in the same asset (`quant/plan.py`).
+
+* **A fair comparison.** "Hold back X% as cash for dips" puts in exactly the same money as plain investing.
+  "Add new money at each dip" puts in more, so it is compared on the money-weighted yearly return (IRR),
+  not the final balance.
+* **No lookahead.** The monthly buy fills at the first session's open. A dip is measured at the close and
+  bought at the next open. Each level re-arms only after a new 52-week high.
+* **Start-date robustness.** The comparison is re-run from every January, so one lucky start doesn't
+  decide the verdict. Wins under 0.5 points a year are labelled "by a small margin".
+* **Honest limits.** Idle cash, fees, a count of the plan variants you've tried, and US-only data are all
+  shown.
+
+On SPY (Nov 2018 → Sep 2026), holding back 25% for dips trailed plain monthly investing in all 6
+start years, by about 1 point a year. The saved cash waited too long between crashes.
+
 ## Quantitative safeguards
 
 * **Lookahead:** indicators on day T use bars ≤ T ("prior N-day" highs and volume exclude T). A signal is known at

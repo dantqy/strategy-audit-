@@ -97,7 +97,7 @@ class AdminPatch(BaseModel):
 class EventIn(BaseModel):
     name: Literal["strategy_submitted", "strategy_testable", "interpretation_confirmed", "backtest_completed",
                   "audit_launched", "report_viewed", "second_strategy_submitted", "referral_source",
-                  "validation_revealed", "sample_viewed", "submission_form_sent"]
+                  "validation_revealed", "sample_viewed", "submission_form_sent", "plan_run"]
     anonymous_user_id: Anon = Field(None, max_length=64)
     props: dict[str, Any] = Field(default_factory=dict)
 
@@ -236,6 +236,33 @@ def sample_audit():
     return {"audit_id": au["audit_id"]}
 
 
+class PlanIn(BaseModel):
+    spec: dict
+    anonymous_user_id: Anon = Field(None, max_length=64)
+
+
+@app.get("/api/plan-options")
+def plan_options():
+    return svc().plan_options()
+
+
+@app.post("/api/plans")
+def run_plan(body: PlanIn):
+    try:
+        out = svc().run_plan(body.spec, body.anonymous_user_id)
+    except ValidationError as e:
+        raise HTTPException(422, [f"{'.'.join(map(str, x['loc']))}: {x['msg']}" for x in e.errors()])
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    svc().db.event("plan_run", body.anonymous_user_id, {"dip": str(bool(out["spec"].get("dip")))})
+    return out
+
+
+@app.get("/api/plans/{plan_id}")
+def get_plan(plan_id: str):
+    return svc().get_plan(plan_id)
+
+
 @app.post("/api/events")
 def event(body: EventIn):
     svc().db.event(body.name, body.anonymous_user_id, {k: str(v)[:100] for k, v in list(body.props.items())[:5]})
@@ -288,6 +315,15 @@ def admin_funnel(x_admin_token: str | None = Header(None)):
 
 # ---------------------------------------------------------------- frontend
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+
+@app.middleware("http")
+async def _revalidate_static(request: Request, call_next):
+    """Browsers must re-check the page and its scripts (a cheap 304 when unchanged), so updates show on a plain reload."""
+    resp = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        resp.headers["Cache-Control"] = "no-cache"
+    return resp
 
 
 @app.get("/")

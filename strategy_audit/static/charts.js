@@ -32,11 +32,13 @@
       lab.textContent = fmt(t); g.append(lab);
     }
     if (dates) {                                 // one label per year boundary
-      let lastY = null;
+      let lastY = null, lastX = -1e9;
       dates.forEach((d, i) => {
         const yr = d.slice(0, 4);
         if (yr !== lastY) {
           lastY = yr;
+          if (x(i) - lastX < 40) return;           // a short first year would collide with the next label
+          lastX = x(i);
           const lab = svgEl("text", { x: x(i), y: height - 8, "text-anchor": "start", "font-size": 12, fill: css("--muted") });
           lab.textContent = yr; g.append(lab);
         }
@@ -76,7 +78,9 @@
       for (const s of series) {
         let d = "";
         s.values.forEach((v, i) => { if (v != null) d += (d ? "L" : "M") + x(i).toFixed(1) + " " + y(v).toFixed(1); });
-        svg.append(svgEl("path", { d, fill: "none", stroke: css(s.color), "stroke-width": s.width || 2, "stroke-linejoin": "round" }));
+        const p = svgEl("path", { d, fill: "none", stroke: css(s.color), "stroke-width": s.width || 2, "stroke-linejoin": "round" });
+        if (s.dash) p.setAttribute("stroke-dasharray", "6 5");
+        svg.append(p);
       }
       hover(svg, tip, el, n, x, i => dates[i] + "  " + series.map(s => `${s.name} ${(tipFmt || fmt)(s.values[i])}`).join("  ·  "));
     },

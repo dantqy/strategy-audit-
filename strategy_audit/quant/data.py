@@ -47,6 +47,7 @@ class DatasetInfo:
 class MarketDataProvider:
     """Interface. Bars are split/dividend-adjusted daily OHLCV indexed by US session date (datetime.date)."""
     name = "abstract"
+    benchmark_code = "US.SPY"
     synthetic = False
     survivorship_biased = True
     license_status = "unknown"
@@ -158,6 +159,7 @@ class FutureCommercialProvider(MarketDataProvider):
 
 class MockProvider(MarketDataProvider):
     """SYNTHETIC random-walk data on real US trading days. Deterministic from a seed. NOT REAL MARKET DATA."""
+    benchmark_code = "MOCK.SPY"
     name = "mock"
     synthetic = True
     survivorship_biased = False
@@ -198,7 +200,7 @@ class MockProvider(MarketDataProvider):
         return self._cache[code]
 
     def benchmark(self) -> pd.DataFrame:
-        return self.bars("MOCK.SPY")
+        return self.bars(self.benchmark_code)
 
     def dataset_version(self) -> str:
         return f"mock-seed{self.seed}-n{len(self.codes)}-{self.days[0]}-{self.days[-1]}"

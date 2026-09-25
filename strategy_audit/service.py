@@ -27,6 +27,7 @@ from .quant import robustness as R
 from .quant.data import MarketDataProvider, default_provider
 from .quant.engine import Market, condition_funnel, run_backtest
 from .quant.lookahead import lookahead_audit
+from .quant.plan import PlanSpec, earliest_start, run_plan
 from .schema import StrategySpec
 
 DEMO_TEXT = ("Buy S&P 500 stocks when RSI(14) is below 30, the stock remains above its 200-day moving average, "
@@ -306,6 +307,40 @@ class AuditService:
             return self.reveal(ver["family_id"], ver["version_id"], True)["audit"]
         last = self.db.one("SELECT id FROM audits WHERE version_id=? ORDER BY created_at DESC", (ver["version_id"],))
         return self.get_audit(last["id"]) if last else self.audit(bt["backtest_id"])
+
+    # ------------------------------------------------------ investment plans
+    def _plan_assets(self) -> dict[str, pd.DataFrame]:
+        return {self.provider.benchmark_code: self.mkt.spy, **self.mkt.bars}
+
+    def plan_options(self) -> dict:
+        spy = self.mkt.spy
+        first = earliest_start(spy)
+        return {"benchmark": self.provider.benchmark_code, "assets": sorted(self.mkt.bars),
+                "earliest_start": f"{first.year}-{first.month:02d}", "last_bar": str(spy.index[-1]),
+                "defaults": {"fee_per_order": 0.99, "slippage_bps": 10.0}}
+
+    def run_plan(self, spec_dict: dict, anon: str | None) -> dict:
+        spec = PlanSpec.model_validate(spec_dict)
+        bars = self._plan_assets().get(spec.asset)
+        if bars is None:
+            raise ValueError(f"asset: {spec.asset} is not in the current dataset")
+        res = clean(run_plan(spec, bars))
+        pid = new_id("plan")
+        self.db.x("INSERT INTO plans(id, created_at, anonymous_user_id, dataset_version, engine_version, spec_json, "
+                  "results_json) VALUES (?,?,?,?,?,?,?)",
+                  (pid, now(), anon, self.provider.dataset_version(), ENGINE_VERSION, spec.model_dump_json(), json.dumps(res)))
+        return self.get_plan(pid)
+
+    def get_plan(self, plan_id: str) -> dict:
+        p = self.db.one("SELECT * FROM plans WHERE id=?", (plan_id,))
+        if not p:
+            raise NotFound("plan not found")
+        tried = self.db.one("SELECT COUNT(*) AS n FROM plans WHERE anonymous_user_id=? AND created_at<=?",
+                            (p["anonymous_user_id"], p["created_at"]))["n"] if p["anonymous_user_id"] else 1
+        return {"plan_id": p["id"], "created_at": p["created_at"], "dataset_version": p["dataset_version"],
+                "engine_version": p["engine_version"], "spec": json.loads(p["spec_json"]),
+                "variants_tried": tried, "synthetic_data": self.provider.synthetic,
+                "survivorship_biased": self.provider.survivorship_biased, **json.loads(p["results_json"])}
 
 
 _STUB = {"name": "x", "universe": {"type": "LARGE_CAP_93"}, "direction": "LONG", "entry_execution": "NEXT_OPEN",

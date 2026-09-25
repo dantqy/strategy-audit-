@@ -1,6 +1,6 @@
 """SQLite persistence (stdlib sqlite3, parameterised queries only).
 
-Tables: families, versions, backtests, audits, validation_reveals, submissions, events.
+Tables: families, versions, backtests, audits, validation_reveals, submissions, plans, events.
 There is no user/login table: people are identified only by a random anonymous id kept in their browser.
 """
 from __future__ import annotations
@@ -40,6 +40,9 @@ CREATE TABLE IF NOT EXISTS submissions (
     strategy_type TEXT, testable_yn TEXT, reason_if_not_testable TEXT, audit_minutes REAL, report_delivered TEXT,
     returned_without_prompt TEXT, days_until_return INTEGER, referred_someone TEXT, willing_to_pay TEXT,
     actual_payment_test TEXT, admin_notes TEXT);
+CREATE TABLE IF NOT EXISTS plans (
+    id TEXT PRIMARY KEY, created_at TEXT NOT NULL, anonymous_user_id TEXT, dataset_version TEXT, engine_version TEXT,
+    spec_json TEXT NOT NULL, results_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, anonymous_user_id TEXT, name TEXT NOT NULL, props_json TEXT);
 """
