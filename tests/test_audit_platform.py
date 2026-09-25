@@ -68,6 +68,16 @@ class TestParser(unittest.TestCase):
         r = interpret("Buy large cap when RSI below 30. next open. hold 5 days.")
         self.assertTrue(any(i["kind"] == "missing" and "RSI period" in i["message"] for i in r["issues"]))
 
+    def test_volume_multiple_is_not_leverage(self):
+        """User report (2026-09-25): "volume 2x its 20-day average" was rejected as leverage."""
+        r = interpret("buy when volume 2x its 20-day average, hold 10 days")
+        self.assertFalse([i for i in r["issues"] if i["kind"] == "unsupported"])
+        self.assertIn({"indicator": "REL_VOLUME", "period": 20, "operator": ">=", "value": 2.0},
+                      [{k: c[k] for k in ("indicator", "period", "operator", "value")}
+                       for c in r["draft"]["entry_conditions"]])
+        for text in ("use 2x leverage", "buy on margin", "3x long the index"):
+            self.assertTrue([i for i in interpret(text)["issues"] if i["kind"] == "unsupported"], text)
+
     def test_drop_from_52_week_high(self):
         """Real user wording (2026-09-25): several drop levels -> one question, never a silent pick."""
         r = interpret("i buy more when theres a 10%, 15%, 20% drop etc. in price from 52wk historically high")

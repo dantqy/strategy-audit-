@@ -79,7 +79,8 @@ UNSUPPORTED = [
     (r"\b(futures?)\b", "Futures are not supported in V0."),
     (r"\b(intraday|minute|hourly|scalp\w*|5[- ]?min|1[- ]?min|day[- ]?trad\w*)\b",
      "Intraday strategies are not supported in V0 (daily candles only)."),
-    (r"\b(leverage\w*|margin|2x|3x)\b", "Leverage is not supported in V0."),
+    (r"\b(leverage\w*|margin)\b|\b[2-9]x\s+(?:long|leverag\w*|etf|exposure|position|the\s+(?:position|market|index))\b",
+     "Leverage is not supported in V0."),
     (r"\b(earnings|p/?e\b|pe ratio|revenue|eps|fundamental\w*|valuation|undervalued|cheap|dividend\w*|news|sentiment|twitter|reddit|analyst\w*)\b",
      "Fundamental, news and sentiment data are not in the V0 dataset (price and volume only)."),
     (r"\btrailing\s+stop\b", "Trailing stops are not supported in V0 (fixed stop-loss / take-profit only)."),
@@ -142,7 +143,7 @@ RET_UP_RE = re.compile(r"\b(?:risen|rose|rises|gained|gains|up|rallied|rallies|i
                        r"(?:by\s+)?(at\s+least|more\s+than|over|by|)\s*" + NUM + r"\s*(?:%|percent)"
                        r"(?:\s*(?:over|in|during|within|across)\s+(?:the\s+)?(?:previous|past|last|prior)?\s*" + NUM + r"\s*" + UNIT + r")?")
 VOL_RE = re.compile(r"\bvolume\s+(?:is\s+)?(?:at\s+least\s+|more\s+than\s+|above\s+|over\s+|>=?\s*)?" + NUM +
-                    r"\s*(?:x|times)\s*(?:its\s+|the\s+)?(?:average|normal|avg|usual)"
+                    r"\s*(?:x|times)\s*(?:(?:its|the|their)\s+)?(?:(\d+)\s*[- ]?\s*(?:day|session)s?\s+)?(?:average|normal|avg|usual)"
                     r"(?:\s+(?:of\s+|over\s+)?(?:the\s+)?(?:previous|past|last|prior)?\s*" + NUM + r"\s*" + UNIT + r")?")
 HIGH_RE = re.compile(r"\b(?:new|makes?\s+a|hits?\s+a|closes?\s+at\s+a|breaks?\s+(?:above|out\s+(?:above|to|of))?\s*(?:a|the)?)\s*"
                      + NUM + r"\s*[- ]?\s*(day|session|week)s?\s+(high|low)")
@@ -293,8 +294,8 @@ def interpret(text: str) -> dict:
             eat(m)
     for m in VOL_RE.finditer(t):
         x = _n(m.group(1))
-        if m.group(2):
-            n = int(_n(m.group(2)))
+        if m.group(2) or m.group(3):
+            n = int(_n(m.group(2) or m.group(3)))
             ctx.cond({"indicator": "REL_VOLUME", "period": n, "operator": ">=", "value": x}, m.group(0),
                      f"Volume >= {x:g}x prior {n}-session average")
         else:
